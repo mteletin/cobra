@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Cobra.Machine/Cobra.Machine.csproj" />
+    <Project Path="src/Cobra.Video/Cobra.Video.csproj" />
+    <Project Path="src/Cobra.App/Cobra.App.csproj" />
+    <Project Path="src/Hc2000.Z80/Hc2000.Z80.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <OutputType Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">WinExe</OutputType>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AssemblyName>cobra</AssemblyName>
+    <RootNamespace>Cobra.App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cobra.App.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cobra.Machine\Cobra.Machine.csproj" />
+    <ProjectReference Include="..\Cobra.Video\Cobra.Video.csproj" />
+  </ItemGroup>
+  <!-- The published ROMs travel with the App. -->
+  <ItemGroup>
+    <Content Include="..\..\roms\SYSTEM_ROM.bin" Link="roms\SYSTEM_ROM.bin" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\roms\BOOT_2K_COBRA_80K.bin" Link="roms\BOOT_2K_COBRA_80K.bin" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\roms\16K_UNIFIED_BOOT_rev.01.bin" Link="roms\16K_UNIFIED_BOOT_rev.01.bin" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\roms\BOOT_2K_COBRA_64K.bin" Link="roms\BOOT_2K_COBRA_64K.bin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!-- The pinned SDL2 2.32.10 for sound (deploy/sdl2, with its manifests). -->
+  <ItemGroup>
+    <Content Include="..\..\deploy\sdl2\SDL2.dll" Link="runtimes\win-x64\native\SDL2.dll" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\deploy\sdl2\linux-x64\libSDL2-2.0.so.0" Link="runtimes\linux-x64\native\libSDL2-2.0.so.0" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\deploy\sdl2\linux-x64\SDL2-LICENSE.txt" Link="runtimes\linux-x64\native\SDL2-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\deploy\sdl2\linux-x64\SDL2-MANIFEST.sha256" Link="runtimes\linux-x64\native\SDL2-MANIFEST.sha256" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
