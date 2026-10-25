@@ -26,6 +26,9 @@ public sealed class MachineSession : IDisposable
     private string? _tapeName;
     private VideoFrame? _latest;
     private long _frame;
+    private readonly Dictionary<CobraKey, long> _hold = new();
+    private readonly List<CobraKey> _deferred = new();
+    private bool _deferReleaseAll;
     private Thread? _thread;
     private volatile bool _stopping;
     private volatile bool _paused;
@@ -66,15 +69,48 @@ public sealed class MachineSession : IDisposable
     /// <summary>The newest composed frame, or null if none was composed since the last call.</summary>
     public VideoFrame? TakeLatestFrame() => Interlocked.Exchange(ref _latest, null);
 
-    public void Press(CobraKey key) => _commands.Enqueue(() => _machine.Keyboard.Press(key, _machine.Cpu.TStates));
+    /// <summary>A key is held for at least one whole frame: the guest samples the keyboard only at the
+    /// T-states of the frames it runs, so a press and a release that land in the same frame window are
+    /// drained together and the latch is never seen while the key is down. A release that follows its
+    /// press from the same frame is therefore deferred until after that frame completes: an
+    /// instant tap must never be invisible to the machine.</summary>
+    public void Press(CobraKey key) => _commands.Enqueue(() =>
+    {
+        _machine.Keyboard.Press(key, _machine.Cpu.TStates);
+        _hold[key] = _frame;
+    });
 
-    public void Release(CobraKey key) => _commands.Enqueue(() => _machine.Keyboard.Release(key));
+    public void Release(CobraKey key) => _commands.Enqueue(() =>
+    {
+        var pressedThisFrame = _hold.TryGetValue(key, out var pressedAt) && pressedAt == _frame;
+        _hold.Remove(key);
+        if (pressedThisFrame) _deferred.Add(key);
+        else _machine.Keyboard.Release(key);
+    });
 
     public void ReleaseAllKeys() => _commands.Enqueue(() =>
     {
-        _machine.Keyboard.ReleaseAll();
+        if (_pressedThisFrameAny())
+        {
+            // A key pressed in the current frame window is still owed its one frame: hold everything
+            // for the rest of the frame, then release all.
+            _deferReleaseAll = true;
+            _hold.Clear();
+        }
+        else
+        {
+            _machine.Keyboard.ReleaseAll();
+        }
         _machine.Joystick = Joystick.None;
     });
+
+    /// <summary>True while a key pressed in the current frame window is still owed its one frame.</summary>
+    private bool _pressedThisFrameAny()
+    {
+        foreach (var pressedAt in _hold.Values)
+            if (pressedAt == _frame) return true;
+        return false;
+    }
 
     /// <summary>Holds or lets go the Kempston joystick's <paramref name="direction"/> (port B, 1FH).</summary>
     public void Stick(Joystick direction, bool held) => _commands.Enqueue(() =>
@@ -148,6 +184,9 @@ public sealed class MachineSession : IDisposable
         if (boot is { } b) Boot = b;
         _machine = Build();
         _audioTState = 0;
+        _hold.Clear();
+        _deferred.Clear();
+        _deferReleaseAll = false;
         for (var unit = 0; unit < 4; unit++)
             if (_disks[unit] is { } disk) _machine.Floppy.Insert(unit, disk);
     });
@@ -175,6 +214,16 @@ public sealed class MachineSession : IDisposable
         {
             Drain();
             _machine.RunFrames(1);
+            if (_deferred.Count > 0)
+            {
+                foreach (var key in _deferred) _machine.Keyboard.Release(key);
+                _deferred.Clear();
+            }
+            if (_deferReleaseAll)
+            {
+                _deferReleaseAll = false;
+                _machine.Keyboard.ReleaseAll();
+            }
             Sound();
             var frame = Interlocked.Increment(ref _frame);
             var mode = _machine.EightyColumnLatch ? VideoMode.EightyColumns : _machine.VideoSecondHalf ? VideoMode.SecondHalf : VideoMode.Standard;

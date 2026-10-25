@@ -4,22 +4,28 @@ namespace Cobra.Machine;
 /// ports A and B input, port C output.
 /// Port A: keyboard matrix lines K0-K5 plus tape-in. Port B: two Kempston
 /// joystick ports (J6) - kept on the chip; the sources give no Z80-visible
-/// address for it. Port C: the output nets TO (tape out), LS
-/// (loudspeaker), SO (serial out / SYSTEM ROM A14), O5, O6 and BORDER.
+/// address for it. Port C: the output nets BORDER (bits 0-2, the 3-bit
+/// border colour), TO (tape out), LS (loudspeaker), the general-use O5,
+/// O6 (configuration) and SO (serial out / SYSTEM ROM A14).
 public sealed class Port8255
 {
-    // Port-C bit identities given by the published BOOT disassembly
-    // (BOOT_2K_COBRA_80K updated, 0032-0034 and the CTRL branch at 0061-0065):
-    //   $40 -> "set border to black, SO to 0, O5 to 0, O6 to 1"
-    //   $03 -> "set border to white, SO to 0, O5 to 0, O6 to 0"
-    //   (IN A,($FE); OR $40; XOR $20; OUT ($FE),A) -> "set O6 to 1, O5 to 1"
-    // So O6 is bit 6, O5 is bit 5, and BORDER follows the same bit 6 on the
-    // v.0 board (black when set, white when clear). The remaining nets (TO,
-    // LS, SO) are not given bit by bit there, so only the raw byte and the
-    // known bits are asserted.
+    // Port-C bit identities (Hardware Manual rev.1.0, pp.10, 16-17):
+    // bits 0-2 BORDER - the 3-bit border colour (the W-key EPROM test reports
+    // a bad chip by flashing the corresponding colour 0-7, p.10); bit 3 TO
+    // (tape out); bit 4 LS (loudspeaker); bit 5 general use - the CP/M BIOS
+    // uses it as the 80-column latch ("O5"); bit 6 O6, the configuration bit
+    // ("bit 6 of the output port FEH is set to 0 or 1 according to the
+    // configuration chosen", p.10); bit 7 SO (serial out / SYSTEM ROM A14).
+    // The published BOOT disassembly's comments (BOOT_2K_COBRA_80K updated,
+    // 002C-0034, the BASIC switch at 0051 and the CTRL branch at 0061-0065)
+    // read "$40 -> set border to black ... O6 to 1" and "$03 -> set border to
+    // white ... O6 to 0", which suggests the border follows bit 6. It does
+    // not: the BOOT's configuration switch writes 0x41/0x03 through bit 6
+    // (PortCWrites41And03), so bit 6 is O6 and the border is bits 0-2. The
+    // BOOT's own writes therefore give border 0 ($40) and border 3 ($03).
     public const int O5Bit = 0x20;
     public const int O6Bit = 0x40;
-    public const int BorderBit = 0x40;
+    public const int BorderMask = 0x07;
 
     // SYSTEM ROM quarter select, given by the Boot Manager source
     // (MasterBoot-CoBra+CPM_rev.01.asm, ROM select routine): "bit 3 (TO=A15)",
@@ -100,9 +106,11 @@ public sealed class Port8255
     /// (the configurator owns the flip-flops; this chip only emits the nets).</summary>
     public bool O6 => (_portC & O6Bit) != 0;
 
-    /// <summary>BORDER net: drives the border colour to the video circuit.
-    /// Black when set, white when clear (BOOT init $40 / BASIC switch $03).</summary>
-    public bool BorderBlack => (_portC & BorderBit) != 0;
+    /// <summary>BORDER nets (bits 0-2 of <see cref="PortCPins"/>): the 3-bit border
+    /// colour the video circuit takes (Hardware Manual rev.1.0, pp.10, 16-17;
+    /// the App feeds it to the frame compositor as-is). Undriven (port C in
+    /// input mode) the lines read high: colour 7.</summary>
+    public int BorderColour => PortCPins & BorderMask;
 
     /// <summary>8255A RESET: output latches cleared and every port in input mode
     /// until the next mode set.</summary>

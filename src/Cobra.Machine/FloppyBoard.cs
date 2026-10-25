@@ -29,7 +29,12 @@ public sealed class FloppyBoard
     public FloppyBoard()
     {
         Timing = new FdcTiming(MasterHz: MasterHz, FdcHz: 4_000_000, MfmBitsPerSecond: 250_000, Rpm: 300);
-        for (var i = 0; i < 4; i++) _drives[i] = new FloppyDrive(new DriveProfile(80, 2));
+        // Reference drive profile: 86 cylinders so the FDC can seek the full 86-track published 860K
+        // media (cpm860k-ro.html: 860KB = 86 tracks; published DEVIL captures reach 82 cylinders).
+        // A supported reference mechanism, not a claim that every original 5.25" mechanism had 86
+        // physical steps.
+        // A seek past an image's track count returns NoData, so 80-track media is unaffected.
+        for (var i = 0; i < 4; i++) _drives[i] = new FloppyDrive(new DriveProfile(86, 2));
         Fdc = new Fdc8272(Scheduler, 10, unit => _drives[unit], Timing, instant: false)
         {
             DriveReady = unit => _drives[unit].Image is not null,
