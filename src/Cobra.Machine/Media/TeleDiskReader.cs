@@ -20,10 +20,13 @@ public static class TeleDiskReader
         if (signature == "td") throw new NotSupportedException("advanced-compression Teledisk (\"td\") images are not read");
         if (signature != "TD") throw new InvalidDataException("not a Teledisk image (no TD signature)");
         var sides = td0[9];
+        if (sides is not (1 or 2)) throw new InvalidDataException("invalid Teledisk head count");
         var at = 12;
         if ((td0[7] & 0x80) != 0)
         {
+            Require(td0.Length, at, 10);
             var commentLength = td0[at + 2] | td0[at + 3] << 8;
+            Require(td0.Length, at + 10, commentLength);
             at += 10 + commentLength;
         }
 
@@ -31,22 +34,29 @@ public static class TeleDiskReader
         var cylinders = 0;
         while (at < td0.Length && td0[at] != 0xFF)
         {
+            Require(td0.Length, at, 4);
             int count = td0[at], cylinder = td0[at + 1], head = td0[at + 2] & 0x7F;
+            if (head >= sides) throw new InvalidDataException("track head exceeds Teledisk head count");
             var fm = (td0[at + 2] & 0x80) != 0 || (td0[5] & 0x80) != 0;
             at += 4;
             cylinders = Math.Max(cylinders, cylinder + 1);
             for (var s = 0; s < count; s++)
             {
+                Require(td0.Length, at, 6);
                 int c = td0[at], h = td0[at + 1], r = td0[at + 2], n = td0[at + 3], flags = td0[at + 4];
+                if (n > 6) throw new InvalidDataException("invalid Teledisk sector size");
                 at += 6;
                 if ((flags & 0x30) != 0) continue; // no data recorded for this ID
+                Require(td0.Length, at, 2);
                 var length = td0[at] | td0[at + 1] << 8;
+                Require(td0.Length, at + 2, length);
                 var data = Decode(td0.AsSpan(at + 2, length), 128 << n);
                 at += 2 + length;
                 sectors.Add((cylinder, head, new FloppySector(c, h, r, n, data, Mfm: !fm)));
             }
         }
 
+        if (at >= td0.Length) throw new InvalidDataException("missing Teledisk end marker");
         var image = new FloppyImage(Math.Max(cylinders, 1), Math.Clamp((int)sides, 1, 2));
         foreach (var (cylinder, head, sector) in sectors) image.Add(cylinder, head, sector);
         return image;
@@ -54,12 +64,14 @@ public static class TeleDiskReader
 
     private static byte[] Decode(ReadOnlySpan<byte> block, int size)
     {
+        Require(block.Length, 0, 1);
         var method = block[0];
         var source = block[1..];
         var data = new byte[size];
         switch (method)
         {
             case 0:
+                if (source.Length != size) throw new InvalidDataException("incorrect raw sector length");
                 source[..size].CopyTo(data);
                 break;
             case 1:
@@ -68,6 +80,7 @@ public static class TeleDiskReader
                 for (var i = 0; i + 4 <= source.Length && at < size; i += 4)
                 {
                     var repeats = source[i] | source[i + 1] << 8;
+                    Require(size, at, repeats * 2);
                     for (var k = 0; k < repeats && at + 1 < size + 1; k++)
                     {
                         if (at < size) data[at++] = source[i + 2];
@@ -75,6 +88,7 @@ public static class TeleDiskReader
                     }
                 }
 
+                if (at != size || source.Length % 4 != 0) throw new InvalidDataException("incomplete repeated sector");
                 break;
             }
 
@@ -83,15 +97,20 @@ public static class TeleDiskReader
                 var at = 0;
                 for (var i = 0; i < source.Length && at < size;)
                 {
+                    Require(source.Length, i, 2);
                     int type = source[i], count = source[i + 1];
                     i += 2;
                     if (type == 0)
                     {
+                        Require(source.Length, i, count);
+                        Require(size, at, count);
                         for (var k = 0; k < count && at < size; k++) data[at++] = source[i + k];
                         i += count;
                     }
                     else
                     {
+                        Require(source.Length, i, 2 * type);
+                        Require(size, at, 2 * type * count);
                         var pattern = source.Slice(i, 2 * type);
                         for (var k = 0; k < count; k++)
                             foreach (var b in pattern)
@@ -100,6 +119,7 @@ public static class TeleDiskReader
                     }
                 }
 
+                if (at != size) throw new InvalidDataException("incomplete run-length sector");
                 break;
             }
 
@@ -108,5 +128,11 @@ public static class TeleDiskReader
         }
 
         return data;
+    }
+
+    private static void Require(int length, int offset, int count)
+    {
+        if (offset < 0 || count < 0 || offset > length || count > length - offset)
+            throw new InvalidDataException("truncated or oversized Teledisk data");
     }
 }

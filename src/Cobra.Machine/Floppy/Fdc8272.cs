@@ -28,8 +28,9 @@ public sealed class Fdc8272
     /// <summary>The RDY input per unit. Null: tied high, the HC2000 wiring. A unit that is not ready reads
     /// RDY = 0 in SENSE DRIVE STATUS, and a data command on it ends abnormally with NR (ST0 0x48).
     /// The chip polls RDY between commands and interrupts when a unit's line changes state, either
-    /// polarity (8272A data sheet, SENSE INTERRUPT STATUS, table 11: ST0 IC = 11, SE = 0); RDY reads
-    /// not ready during reset, so leaving reset reports every unit that is ready then, and only those.</summary>
+    /// polarity (8272A data sheet, SENSE INTERRUPT STATUS, table 11: ST0 IC = 11, SE = 0); the interrupt
+    /// is a change of state, and at reset release the chip seeds its poll baseline from the board's RDY
+    /// and queues nothing (hc2000-fdc-reset-ready-poll-v1).</summary>
     public Func<int, bool>? DriveReady { get; set; }
 
     /// <summary>The chip's RDY poll between commands: a unit whose line changed since the last poll queues
@@ -263,11 +264,9 @@ public sealed class Fdc8272
         else if (Phase == FdcPhase.Reset)
         {
             Phase = FdcPhase.Command;
-            for (var i = 0; i < 4; i++)
-            {
-                polledReady[i] = Ready(i);
-                if (polledReady[i]) interrupts.Enqueue(((byte)(0xc0 | i), 0));
-            }
+            // Reset release seeds the RDY poll baseline and queues nothing (hc2000-fdc-reset-ready-poll-v1):
+            // the ready-change interrupt is a change of state, and no transition has occurred yet.
+            for (var i = 0; i < 4; i++) polledReady[i] = Ready(i);
         }
     }
 

@@ -27,6 +27,7 @@ public sealed class MachineSession : IDisposable
     private VideoFrame? _latest;
     private long _frame;
     private readonly Dictionary<CobraKey, long> _hold = new();
+    private readonly Dictionary<CobraKey, long> _latched = new();
     private readonly List<CobraKey> _deferred = new();
     private bool _deferReleaseAll;
     private Thread? _thread;
@@ -69,33 +70,56 @@ public sealed class MachineSession : IDisposable
     /// <summary>The newest composed frame, or null if none was composed since the last call.</summary>
     public VideoFrame? TakeLatestFrame() => Interlocked.Exchange(ref _latest, null);
 
+    /// <summary>A key let go while the guest is still in the BOOT is kept latched for at least this
+    /// many frames: the 80K BOOT's logo animation has a phase (about 360 frames) where the guest
+    /// reads no keyboard at all, so a tap inside that phase would otherwise be lost.</summary>
+    public const int StartupLatchHoldFrames = 1000;
+
     /// <summary>A key is held for at least one whole frame: the guest samples the keyboard only at the
     /// T-states of the frames it runs, so a press and a release that land in the same frame window are
     /// drained together and the latch is never seen while the key is down. A release that follows its
     /// press from the same frame is therefore deferred until after that frame completes: an
-    /// instant tap must never be invisible to the machine.</summary>
+    /// instant tap must never be invisible to the machine. While the guest is still in the BOOT, a
+    /// let-go key is kept latched until the guest leaves the BOOT (it read the key) or
+    /// <see cref="StartupLatchHoldFrames"/> pass, so a tap inside the logo's keyboard-dead phase is
+    /// not lost either.</summary>
     public void Press(CobraKey key) => _commands.Enqueue(() =>
     {
         _machine.Keyboard.Press(key, _machine.Cpu.TStates);
         _hold[key] = _frame;
+        _latched.Remove(key);
     });
 
     public void Release(CobraKey key) => _commands.Enqueue(() =>
     {
         var pressedThisFrame = _hold.TryGetValue(key, out var pressedAt) && pressedAt == _frame;
         _hold.Remove(key);
-        if (pressedThisFrame) _deferred.Add(key);
-        else _machine.Keyboard.Release(key);
+        if (_machine.Configuration == HardwareConfiguration.Startup)
+        {
+            // The guest has not read any key yet (it is still in the BOOT): keep this key latched
+            // and let AdvanceFrame let it go when the guest leaves the BOOT or the hold expires.
+            _latched[key] = _frame;
+        }
+        else if (pressedThisFrame)
+        {
+            _deferred.Add(key);
+        }
+        else
+        {
+            _machine.Keyboard.Release(key);
+        }
     });
 
     public void ReleaseAllKeys() => _commands.Enqueue(() =>
     {
-        if (_pressedThisFrameAny())
+        var defer = _pressedThisFrameAny();
+        _hold.Clear();
+        _latched.Clear();
+        if (defer)
         {
             // A key pressed in the current frame window is still owed its one frame: hold everything
             // for the rest of the frame, then release all.
             _deferReleaseAll = true;
-            _hold.Clear();
         }
         else
         {
@@ -185,6 +209,7 @@ public sealed class MachineSession : IDisposable
         _machine = Build();
         _audioTState = 0;
         _hold.Clear();
+        _latched.Clear();
         _deferred.Clear();
         _deferReleaseAll = false;
         for (var unit = 0; unit < 4; unit++)
@@ -218,6 +243,15 @@ public sealed class MachineSession : IDisposable
             {
                 foreach (var key in _deferred) _machine.Keyboard.Release(key);
                 _deferred.Clear();
+            }
+            if (_latched.Count > 0)
+            {
+                var inBoot = _machine.Configuration == HardwareConfiguration.Startup;
+                foreach (var key in _latched.Where(kv => !inBoot || _frame - kv.Value >= StartupLatchHoldFrames).Select(kv => kv.Key).ToList())
+                {
+                    _machine.Keyboard.Release(key);
+                    _latched.Remove(key);
+                }
             }
             if (_deferReleaseAll)
             {
